@@ -1,10 +1,12 @@
 {
   "functions": {
     "app/api/trips/[id]/passenger-list/route.ts": {
-      "maxDuration": 30
+      "maxDuration": 30,
+      "memory": 3008
     },
     "app/api/bookings/[id]/ticket/route.ts": {
-      "maxDuration": 15
+      "maxDuration": 15,
+      "memory": 1024
     }
   },
   "build": {

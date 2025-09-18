@@ -11,13 +11,16 @@ async function getPuppeteer() {
   // In serverless (Vercel) prefer puppeteer-core + @sparticuz/chromium
   if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
     try {
-      chromium = await import('@sparticuz/chromium')
+      // Use require for more reliable imports in serverless environments
+      chromium = require('@sparticuz/chromium')
+      console.log('Successfully loaded @sparticuz/chromium:', typeof chromium.executablePath)
     } catch (err) {
       console.warn('@sparticuz/chromium not available:', err)
+      chromium = null
     }
 
     try {
-      puppeteer = await import('puppeteer-core')
+      puppeteer = require('puppeteer-core')
     } catch (err) {
       console.error('puppeteer-core not installed; serverless PDF may fail:', err)
       puppeteer = null
@@ -28,7 +31,7 @@ async function getPuppeteer() {
 
   // Local development: use full puppeteer package if available
   try {
-    puppeteer = await import('puppeteer')
+    puppeteer = require('puppeteer')
   } catch (err) {
     console.error('puppeteer not installed for local dev:', err)
     puppeteer = null
@@ -217,10 +220,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Use @sparticuz/chromium for serverless environments on Vercel/production
     if ((process.env.VERCEL || process.env.NODE_ENV === 'production') && chromium) {
       try {
+        // Verify chromium.executablePath is a function
+        if (typeof chromium.executablePath !== 'function') {
+          console.error('chromium.executablePath is not a function:', typeof chromium.executablePath)
+          throw new Error('Invalid @sparticuz/chromium module')
+        }
+
         // Get executable path from @sparticuz/chromium
         const executablePath = await chromium.executablePath()
         if (executablePath) {
           launchOptions.executablePath = executablePath
+          console.log('Using Chromium executable path:', executablePath)
+        } else {
+          console.warn('No executable path returned from @sparticuz/chromium')
         }
       } catch (e) {
         console.warn('Failed to get @sparticuz/chromium executablePath:', e)
@@ -232,6 +244,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         if (Array.isArray(chromiumArgs) && chromiumArgs.length) {
           const combined = Array.from(new Set([...chromiumArgs, ...(launchOptions.args || [])]))
           launchOptions.args = combined
+          console.log('Using Chromium args:', chromiumArgs)
         }
       } catch (e) {
         console.warn('Failed to get @sparticuz/chromium args:', e)
@@ -267,10 +280,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           // Final attempt with minimal configuration
           try {
             console.log('Final attempt with minimal configuration')
+            let executablePath: string | undefined = undefined
+            if (chromium && typeof chromium.executablePath === 'function') {
+              executablePath = await chromium.executablePath()
+            }
             browser = await puppeteer.launch({
               headless: 'new',
               args: ['--no-sandbox', '--disable-setuid-sandbox'],
-              executablePath: chromium ? await chromium.executablePath() : undefined
+              executablePath
             })
           } catch (finalError: any) {
             console.error('All puppeteer launch attempts failed:', finalError?.message || finalError)
