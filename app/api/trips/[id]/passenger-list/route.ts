@@ -1,22 +1,33 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import fs from 'fs/promises'
-import path from 'path'
 
 // Use puppeteer if installed
 let puppeteer: any = null
+let chromium: any = null
+
 async function getPuppeteer() {
   if (puppeteer) return puppeteer
+  
   try {
-    puppeteer = await import('puppeteer')
+    // Try to import chromium for serverless environments
+    chromium = await import('@sparticuz/chromium')
   } catch (e) {
-    try {
-      puppeteer = await import('puppeteer-core')
-    } catch (err) {
-      console.error('Puppeteer is not installed')
-      puppeteer = null
-    }
+    console.log('Chromium not available, using local puppeteer')
   }
+
+  try {
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      // Use puppeteer-core with chromium for production/Vercel
+      puppeteer = await import('puppeteer-core')
+    } else {
+      // Use regular puppeteer for local development
+      puppeteer = await import('puppeteer')
+    }
+  } catch (e) {
+    console.error('Puppeteer is not installed:', e)
+    puppeteer = null
+  }
+  
   return puppeteer
 }
 
@@ -182,8 +193,31 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const html = await buildHtml(trip)
 
+    // Configure browser launch options based on environment
+    let launchOptions: any = {
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ],
+      headless: true
+    }
+
+    // Use chromium executable for production/Vercel
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      if (chromium) {
+        launchOptions.executablePath = await chromium.executablePath()
+        launchOptions.args = chromium.args
+      }
+    }
+
     // Launch puppeteer and render PDF
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] })
+    const browser = await puppeteer.launch(launchOptions)
     const page = await browser.newPage()
     await page.setContent(html, { waitUntil: 'networkidle0' })
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true })

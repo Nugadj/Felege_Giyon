@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "app/api/trips/[id]/passenger-list/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/bookings/[id]/ticket/route.ts": {
+      "maxDuration": 15
+    }
+  },
+  "build": {
+    "env": {
+      "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true"
+    }
+  }
+}
