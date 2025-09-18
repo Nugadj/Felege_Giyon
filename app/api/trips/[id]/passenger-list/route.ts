@@ -231,8 +231,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         }
     }
 
-    // Launch puppeteer and render PDF
-    const browser = await puppeteer.launch(launchOptions)
+    // Ensure puppeteer-core has an executablePath or channel in serverless environments
+    let browser: any
+    try {
+      // If using puppeteer-core and no executablePath/channel has been set, this will throw.
+      browser = await puppeteer.launch(launchOptions)
+    } catch (e: any) {
+      console.warn('Initial puppeteer.launch failed, attempting fallback:', e?.message || e)
+
+      // If we're running puppeteer-core and the error is missing executablePath, try importing full puppeteer
+      try {
+        const fullPuppeteer = await import('puppeteer')
+        console.log('Falling back to full puppeteer package for PDF generation')
+        browser = await fullPuppeteer.launch(launchOptions)
+      } catch (e2) {
+        console.error('Fallback to full puppeteer failed:', e2)
+        throw e // rethrow original error to be caught by outer try/catch
+      }
+    }
     const page = await browser.newPage()
     await page.setContent(html, { waitUntil: 'networkidle0' })
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true })
