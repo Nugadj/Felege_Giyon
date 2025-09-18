@@ -211,9 +211,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Use chromium executable for production/Vercel
     if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
       if (chromium) {
-        launchOptions.executablePath = await chromium.executablePath()
-        launchOptions.args = chromium.args
-      }
+          // chromium.executablePath may be a function (older libs) or a string (newer libs)
+          try {
+            const exePath = typeof chromium.executablePath === 'function'
+              ? await chromium.executablePath()
+              : chromium.executablePath
+
+            if (exePath) launchOptions.executablePath = exePath
+          } catch (e) {
+            console.warn('Failed to determine chromium executablePath, continuing with defaults', e)
+          }
+
+          // chromium.args may exist; merge them with our existing args without overwriting
+          if (Array.isArray(chromium.args) && chromium.args.length) {
+            // Prepend chromium recommended args and keep our explicit ones
+            const combined = Array.from(new Set([...(chromium.args || []), ...(launchOptions.args || [])]))
+            launchOptions.args = combined
+          }
+        }
     }
 
     // Launch puppeteer and render PDF
