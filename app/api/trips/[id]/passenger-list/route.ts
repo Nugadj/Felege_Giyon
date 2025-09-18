@@ -1,33 +1,39 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-// Use puppeteer if installed
+// Use puppeteer if installed. For Vercel/serverless we prefer chrome-aws-lambda
 let puppeteer: any = null
-let chromium: any = null
+let chromeAwsLambda: any = null
 
 async function getPuppeteer() {
   if (puppeteer) return puppeteer
-  
-  try {
-    // Try to import chromium for serverless environments
-    chromium = await import('@sparticuz/chromium')
-  } catch (e) {
-    console.log('Chromium not available, using local puppeteer')
+
+  // In serverless (Vercel) prefer puppeteer-core + chrome-aws-lambda
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    try {
+      chromeAwsLambda = await import('chrome-aws-lambda')
+    } catch (err) {
+      console.warn('chrome-aws-lambda not available:', err)
+    }
+
+    try {
+      puppeteer = await import('puppeteer-core')
+    } catch (err) {
+      console.error('puppeteer-core not installed; serverless PDF may fail:', err)
+      puppeteer = null
+    }
+
+    return puppeteer
   }
 
+  // Local development: use full puppeteer package if available
   try {
-    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
-      // Use puppeteer-core with chromium for production/Vercel
-      puppeteer = await import('puppeteer-core')
-    } else {
-      // Use regular puppeteer for local development
-      puppeteer = await import('puppeteer')
-    }
-  } catch (e) {
-    console.error('Puppeteer is not installed:', e)
+    puppeteer = await import('puppeteer')
+  } catch (err) {
+    console.error('puppeteer not installed for local dev:', err)
     puppeteer = null
   }
-  
+
   return puppeteer
 }
 
@@ -208,46 +214,38 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       headless: true
     }
 
-    // Use chromium executable for production/Vercel
-    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
-      if (chromium) {
-          // chromium.executablePath may be a function (older libs) or a string (newer libs)
-          try {
-            const exePath = typeof chromium.executablePath === 'function'
-              ? await chromium.executablePath()
-              : chromium.executablePath
+    // Use chrome-aws-lambda / serverless chromium when available on Vercel/production
+    if ((process.env.VERCEL || process.env.NODE_ENV === 'production') && chromeAwsLambda) {
+      try {
+        // chromeAwsLambda.executablePath may be an async function in some versions
+        const exe = typeof chromeAwsLambda.executablePath === 'function'
+          ? await chromeAwsLambda.executablePath()
+          : chromeAwsLambda.executablePath
 
-            if (exePath) launchOptions.executablePath = exePath
-          } catch (e) {
-            console.warn('Failed to determine chromium executablePath, continuing with defaults', e)
-          }
+        if (exe) launchOptions.executablePath = exe
+      } catch (e) {
+        console.warn('Failed to get chrome-aws-lambda executablePath:', e)
+      }
 
-          // chromium.args may exist; merge them with our existing args without overwriting
-          if (Array.isArray(chromium.args) && chromium.args.length) {
-            // Prepend chromium recommended args and keep our explicit ones
-            const combined = Array.from(new Set([...(chromium.args || []), ...(launchOptions.args || [])]))
-            launchOptions.args = combined
-          }
-        }
+      // Merge recommended args from chrome-aws-lambda
+      if (Array.isArray(chromeAwsLambda.args) && chromeAwsLambda.args.length) {
+        const combined = Array.from(new Set([...(chromeAwsLambda.args || []), ...(launchOptions.args || [])]))
+        launchOptions.args = combined
+      }
+
+      // On serverless it's safer to force headless and set default viewport
+      launchOptions.headless = 'new' as any
     }
 
     // Ensure puppeteer-core has an executablePath or channel in serverless environments
     let browser: any
     try {
-      // If using puppeteer-core and no executablePath/channel has been set, this will throw.
       browser = await puppeteer.launch(launchOptions)
     } catch (e: any) {
-      console.warn('Initial puppeteer.launch failed, attempting fallback:', e?.message || e)
-
-      // If we're running puppeteer-core and the error is missing executablePath, try importing full puppeteer
-      try {
-        const fullPuppeteer = await import('puppeteer')
-        console.log('Falling back to full puppeteer package for PDF generation')
-        browser = await fullPuppeteer.launch(launchOptions)
-      } catch (e2) {
-        console.error('Fallback to full puppeteer failed:', e2)
-        throw e // rethrow original error to be caught by outer try/catch
-      }
+      console.warn('puppeteer.launch failed:', e?.message || e)
+      // In production on Vercel we should not attempt to import full puppeteer (huge binary).
+      // Provide a clear error that chrome-aws-lambda / puppeteer-core need proper config.
+      throw e
     }
     const page = await browser.newPage()
     await page.setContent(html, { waitUntil: 'networkidle0' })
